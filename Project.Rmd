@@ -1,0 +1,129 @@
+---
+title: "ML_Project_hki"
+author: "HKI"
+date: "October, 2017"
+output: html_document
+---
+# I. Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+# II. Goal
+ Predict the manner in which they did the exercise
+
+# III. Loading, Exploring and Cleaning Data
+```{r }
+training<-read.csv("pml-training.csv")
+testing<-read.csv("pml-testing.csv")
+dim(training)
+dim(testing)
+# Explore the distribution of the target variable
+prop.table(table(training$classe))
+```
+Each classe is relatively equally represented , so that  there is no under/over sampling issues.
+        
+#### *Data partitioning - split data into 2 two sets - 70% for training and 30% for testing*
+```{r}
+library(caret)
+library(mgcv)
+set.seed(9137)
+ind<-createDataPartition(training$classe, p=0.7, list=FALSE)
+train_df<-training[ind,]
+test_df<-training[-ind,]
+dim(train_df)
+dim(test_df)
+```
+
+#### *Data cleaning and preprocesing*
+
+ **Process:**
+ 1. Remove the first 5 columns as they can not be considered as fetures;
+ 2. NA's removal - due to a lot of NA's the features having more than 2/3 NA instances will be removed;
+ 3. Knn impute NA's for numerical features if any;
+ 4. Dimensionality reduction by removing zero and near zero variance variables;
+ 
+```{r echo=FALSE}
+library(parallel)
+library(doParallel)
+cluster <- makeCluster(detectCores() - 1) # convention to leave 1 core for OS
+registerDoParallel(cluster)
+```
+
+```{r}
+train_df<-train_df[,-c(1:5)]
+test_df<-test_df[,-c(1:5)]
+#testing_df<-testing[,-c(1:5)]
+NA_tresh<- sapply(train_df, function(x) mean(is.na(x))) > 2/3
+table(NA_tresh) 
+train_df2<-train_df[,NA_tresh==FALSE]
+test_df2<-test_df[,NA_tresh==FALSE]
+# 67 Features out of 149  are removed from training data set
+# No need to impute miising values
+any(is.na(train_df2))
+any(is.na(test_df2))
+# Remove Zero/Near Zero Variance Variables
+ind_nzv<-nearZeroVar(train_df2, saveMetrics = TRUE)
+train_df3<-train_df2[,-which(ind_nzv$nzv==TRUE|ind_nzv$zeroVar==TRUE)]
+test_df3<-test_df2[,-which(ind_nzv$nzv==TRUE|ind_nzv$zeroVar==TRUE)]
+```
+
+# IV. Modelling
+
+**Process:**
+ 1. Random Forest model;
+ 2. GBM model;
+ 3. Model Selection - Naibe Bayes;
+
+
+**Random Forest**
+```{r}
+# Random Forest - Accuracy on Test set 0.99%
+train_df3$classe<-as.factor(train_df3$classe)
+test_df3$classe<-as.factor(test_df3$classe)
+fitControl <- trainControl(method = "cv",number = 3,allowParallel = TRUE)
+fit1<-train(classe~., method="rf", data=train_df3, trControl = fitControl)
+## Confusion on training test
+fit1$finalModel[5]$confusion
+## Prediction on Test set
+predict_T_rf<-predict(fit1, test_df3)
+## Confussion Matrix on test test 
+CM1<-confusionMatrix(predict_T_rf, test_df3$classe)
+CM1
+```
+**Boosting with trees**
+```{r}
+# Gradient boosted model - Accuracy on Test set 0.991%
+fit2<-train(classe~. ,method="gbm", data=train_df3, verbose=FALSE, trControl = fitControl)
+predict_T_gb<-predict(fit2, test_df3)
+CM2<-confusionMatrix(predict_T_gb, test_df3$classe)
+CM2
+
+```
+**Just from a curiousity : Naive Bayes **  
+```{r, warning=FALSE}
+
+fit3<-train(classe~., method="nb", data=train_df3, trControl=fitControl)
+fit3
+predict_T_nb<-predict(fit3,test_df3 )
+CM3<-confusionMatrix(predict_T_nb, test_df3$classe)
+CM3
+```
+
+# V. Prediction
+
+#### *Choose the best performing model for prediction in initialy provided testing set*
+
+**The three fits tested and their respective accuracy :**
+*** Random Forest : 0.99% accuracy
+*** Gradient Boosting: 0.99% accuracy
+*** Naive Bayes: 0.76 % accuracy
+
+Random Forest : fit_1 is going to be applied to testing set to predict " classe"
+
+```{r}
+predict_testing<-predict(fit1,testing)
+predict_testing
+```
+
+```{r echo=FALSE}
+stopCluster(cluster)
+```
